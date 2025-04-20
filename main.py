@@ -11,7 +11,6 @@ Terminator = "\n"  # 结束符
 class PIDServer:
     def __init__(self):
         self.server_socket = None
-        self.running = False
         self.clients = {}  # 存储客户端连接和对应的PID控制器
         
     def start(self):
@@ -23,9 +22,8 @@ class PIDServer:
             self.server_socket.bind((HOST, PORT))
             self.server_socket.listen(5)
             print(f"PID Server started, listening on {HOST}:{PORT}")
-            self.running = True
             
-            while self.running:
+            while True:
                 try:
                     client_socket, addr = self.server_socket.accept()
                     print(f"New connection from {addr}")
@@ -43,8 +41,7 @@ class PIDServer:
                         'pid': None
                     }
                 except Exception as e:
-                    if self.running:
-                        print(f"Error accepting connection: {e}")
+                    print(f"Error accepting connection: {e}")
         except Exception as e:
             print(f"Server error: {e}")
         finally:
@@ -53,7 +50,7 @@ class PIDServer:
     def handle_client(self, client_socket, addr):
         """处理客户端连接"""
         try:
-            while self.running:
+            while True:
                 # 接收客户端消息（最多 1024 字节）
                 data = client_socket.recv(1024)
                 if not data:
@@ -146,7 +143,6 @@ class PIDServer:
     
     def stop(self):
         """停止服务端"""
-        self.running = False
         # 关闭所有客户端连接
         for addr, client_info in list(self.clients.items()):
             try:
