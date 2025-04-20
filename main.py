@@ -1,7 +1,10 @@
+        
 # -*- coding: utf-8 -*-
 import socket
 import threading
 import json
+import logging
+from datetime import datetime
 from simple_pid import PID
 
 HOST = "0.0.0.0"  # 服务端监听所有网络接口
@@ -12,6 +15,26 @@ class PIDServer:
     def __init__(self):
         self.server_socket = None
         self.clients = {}  # 存储客户端连接和对应的PID控制器
+        self._setup_logging()
+        
+    def _setup_logging(self):
+        """配置日志系统"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('pid_server.log'),  # 日志文件
+                logging.StreamHandler()  # 控制台输出
+            ]
+        )
+        self.logger = logging.getLogger('PIDServer')
+        
+    def _log_client_action(self, addr, action, data=None):
+        """记录客户端操作的专用方法"""
+        log_msg = f"Client {addr} - Action: {action}"
+        if data:
+            log_msg += f" - Data: {data}"
+        self.logger.info(log_msg)
         
     def start(self):
         """启动PID服务端"""
@@ -21,12 +44,12 @@ class PIDServer:
         try:
             self.server_socket.bind((HOST, PORT))
             self.server_socket.listen(5)
-            print(f"PID Server started, listening on {HOST}:{PORT}")
+            self.logger.info(f"PID Server started, listening on {HOST}:{PORT}")
             
             while True:
                 try:
                     client_socket, addr = self.server_socket.accept()
-                    print(f"New connection from {addr}")
+                    self.logger.info(f"New connection from {addr}")
                     # 为每个客户端创建独立的线程处理
                     client_thread = threading.Thread(
                         target=self.handle_client,
@@ -41,9 +64,9 @@ class PIDServer:
                         'pid': None
                     }
                 except Exception as e:
-                    print(f"Error accepting connection: {e}")
+                    self.logger.error(f"Error accepting connection: {e}")
         except Exception as e:
-            print(f"Server error: {e}")
+            self.logger.error(f"Server error: {e}")
         finally:
             self.stop()
     
@@ -65,12 +88,12 @@ class PIDServer:
                 if output == "end":  # 结束仿真
                     break
         except Exception as e:
-            print(f"Error handling client {addr}: {e}")
+            self.logger.error(f"Error handling client {addr}: {e}")
         finally:
             client_socket.close()
             if addr in self.clients:
                 del self.clients[addr]
-            print(f"Client {addr} disconnected")
+            self.logger.info(f"Client {addr} disconnected")
     
     def handle_client_message(self, addr, data):
         """处理客户端消息"""
@@ -81,14 +104,14 @@ class PIDServer:
         # 解析消息
         try:
             message = data.decode('utf-8')
-            print(f"\nFrom {addr} get msg: {message}")
+            self._log_client_action(addr, "received", message)
             message_dict = json.loads(message)
         except json.JSONDecodeError:
-            print(f"Failed to decode JSON message from {addr}. msg:{message}")
+            self.logger.error(f"Failed to decode JSON message from {addr}. msg:{message}")
             stat = False
             return stat, output
         except Exception as e:
-            print(f"msg handle error from {addr}: {e}")
+            self.logger.error(f"msg handle error from {addr}: {e}")
             stat = False
             return stat, output
         
@@ -108,35 +131,38 @@ class PIDServer:
                 pid_controller.output_limits = tuple(pid_params["output_limits"])  # 设置输出范围
                 self.clients[addr]['pid'] = pid_controller
                 
-                print(f"Initialized PID controller for {addr} with params: {pid_params}, setpoint: {setpoint}")
+                self._log_client_action(addr, "init", 
+                                      f"params: {pid_params}, setpoint: {setpoint}, current: {current}")
                 
                 # 计算PID控制器的输出（水泵电压V）
                 output = pid_controller(current)
-                print(f"PID output for {addr}: {output:.2f}")
+                self.logger.info(f"PID output for {addr}: {output:.2f}")
                 
             elif action == "get":
                 # 获取pid输出
                 setpoint = data.get("setpoint")
                 current = data.get("current")
-                print(f"Get current value from {addr}: setpoint: {setpoint}, current: {current}")
+                self._log_client_action(addr, "get", 
+                                       f"setpoint: {setpoint}, current: {current}")
                 
                 if addr in self.clients and self.clients[addr]['pid'] is not None:
                     pid_controller = self.clients[addr]['pid']
                     output = pid_controller(current)
-                    print(f"PID output for {addr}: {output:.2f}")
+                    self.logger.info(f"PID output for {addr}: {output:.2f}")
                 else:
                     stat = False
-                    print(f"No PID controller initialized for {addr}")
+                    self.logger.warning(f"No PID controller initialized for {addr}")
                     
             elif action == "end":
                 # 结束仿真
                 setpoint = data.get("setpoint")
                 current = data.get("current")
                 
-                print(f"Simulation ended for {addr}. setpoint: {setpoint}, current: {current}")
+                self._log_client_action(addr, "end", 
+                                       f"setpoint: {setpoint}, current: {current}")
                 output = "end"
         except Exception as e:
-            print(f"msg handle error for {addr}: {e}")
+            self.logger.error(f"msg handle error for {addr}: {e}")
             stat = False
         
         return stat, output
@@ -147,15 +173,15 @@ class PIDServer:
         for addr, client_info in list(self.clients.items()):
             try:
                 client_info['socket'].close()
-            except:
-                pass
+            except Exception as e:
+                self.logger.error(f"Error closing client socket {addr}: {e}")
         # 关闭服务器socket
         if self.server_socket:
             try:
                 self.server_socket.close()
-            except:
-                pass
-        print("PID Server stopped")
+            except Exception as e:
+                self.logger.error(f"Error closing server socket: {e}")
+        self.logger.info("PID Server stopped")
 
 if __name__ == "__main__":
     server = PIDServer()
@@ -163,4 +189,4 @@ if __name__ == "__main__":
         server.start()
     except KeyboardInterrupt:
         server.stop()
-        print("Keyboard interrupt received. Server stopped.")
+        server.logger.info("Keyboard interrupt received. Server stopped.")
