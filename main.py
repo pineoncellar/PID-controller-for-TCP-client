@@ -147,22 +147,24 @@ class PIDServer:
             data = message_dict.get("data")
             
             if action == "init":
-                # 初始化PID控制器
+                # 初始化PID控制器（无条件重置）
                 pid_params = data.get("pid_params")
-                setpoint = data.get("setpoint")
-                current = data.get("current")
+                setpoint = data.get("setpoint", 0)  # 默认0（兼容旧客户端）
+                current = data.get("current", 0)
                 
-                # 创建PID控制器并保存
+                # 创建新的PID控制器
                 pid_controller = PID(pid_params["kp"], pid_params["ki"], pid_params["kd"], setpoint=setpoint)
-                pid_controller.output_limits = tuple(pid_params["output_limits"])  # 设置输出范围
+                pid_controller.output_limits = tuple(pid_params["output_limits"])
                 self.clients[addr]['pid'] = pid_controller
                 
-                # 为客户端设置专用日志文件
-                log_file = self._setup_client_logging(addr)
-                self.logger.info(f"Created dedicated log file: {log_file}")
+                # 为客户端设置专用日志文件（如果尚未设置）
+                if 'log_file' not in self.clients[addr]:
+                    log_file = self._setup_client_logging(addr)
+                    self.clients[addr]['log_file'] = log_file
+                    self.logger.info(f"Created dedicated log file: {log_file}")
                 
                 self._log_client_action(addr, "init", 
-                                      f"params: {pid_params}, setpoint: {setpoint}, current: {current}")
+                                    f"params: {pid_params}, setpoint: {setpoint}, current: {current}")
                 
                 # 计算PID控制器的输出（水泵电压V）
                 output = pid_controller(current)
@@ -173,10 +175,11 @@ class PIDServer:
                 setpoint = data.get("setpoint")
                 current = data.get("current")
                 self._log_client_action(addr, "get", 
-                                       f"setpoint: {setpoint}, current: {current}")
+                                    f"setpoint: {setpoint}, current: {current}")
                 
                 if addr in self.clients and self.clients[addr]['pid'] is not None:
                     pid_controller = self.clients[addr]['pid']
+                    pid_controller.setpoint = setpoint  # 更新设定值
                     output = pid_controller(current)
                     self.logger.info(f"PID output for {addr}: {output:.2f}")
                 else:
@@ -189,14 +192,14 @@ class PIDServer:
                 current = data.get("current")
                 
                 self._log_client_action(addr, "end", 
-                                       f"setpoint: {setpoint}, current: {current}")
+                                    f"setpoint: {setpoint}, current: {current}")
                 output = "end"
         except Exception as e:
             self.logger.error(f"msg handle error for {addr}: {e}")
             stat = False
         
         return stat, output
-    
+
     def stop(self):
         """停止服务端"""
         # 关闭所有客户端连接
