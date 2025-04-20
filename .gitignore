@@ -1,1 +1,3 @@
 .venv/
+pid_server.log
+log/
