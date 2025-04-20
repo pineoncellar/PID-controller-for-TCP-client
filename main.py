@@ -1,10 +1,10 @@
-        
 # -*- coding: utf-8 -*-
 import socket
 import threading
 import json
 import logging
 from datetime import datetime
+import os
 from simple_pid import PID
 
 HOST = "0.0.0.0"  # 服务端监听所有网络接口
@@ -15,19 +15,45 @@ class PIDServer:
     def __init__(self):
         self.server_socket = None
         self.clients = {}  # 存储客户端连接和对应的PID控制器
-        self._setup_logging()
+        self._setup_logging()  # 初始化基础日志
         
-    def _setup_logging(self):
-        """配置日志系统"""
+    def _setup_logging(self, log_file=None):
+        """配置基础日志系统"""
+        if not os.path.exists('log'):
+            os.makedirs('log')
+        
+        handlers = [logging.StreamHandler()]  # 控制台输出
+        
+        if log_file:
+            # 如果有指定日志文件，则使用指定的日志文件
+            handlers.append(logging.FileHandler(log_file))
+        else:
+            # 默认日志文件
+            handlers.append(logging.FileHandler('pid_server.log'))
+            
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('pid_server.log'),  # 日志文件
-                logging.StreamHandler()  # 控制台输出
-            ]
+            handlers=handlers
         )
         self.logger = logging.getLogger('PIDServer')
+        
+    def _setup_client_logging(self, addr):
+        """为特定客户端设置专用日志文件"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"log/pid_client_{addr[0]}_{addr[1]}_{timestamp}.log"
+        
+        # 移除现有的文件处理器
+        for handler in self.logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                self.logger.removeHandler(handler)
+        
+        # 添加新的文件处理器
+        file_handler = logging.FileHandler(log_filename)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        self.logger.addHandler(file_handler)
+        
+        return log_filename
         
     def _log_client_action(self, addr, action, data=None):
         """记录客户端操作的专用方法"""
@@ -130,6 +156,10 @@ class PIDServer:
                 pid_controller = PID(pid_params["kp"], pid_params["ki"], pid_params["kd"], setpoint=setpoint)
                 pid_controller.output_limits = tuple(pid_params["output_limits"])  # 设置输出范围
                 self.clients[addr]['pid'] = pid_controller
+                
+                # 为客户端设置专用日志文件
+                log_file = self._setup_client_logging(addr)
+                self.logger.info(f"Created dedicated log file: {log_file}")
                 
                 self._log_client_action(addr, "init", 
                                       f"params: {pid_params}, setpoint: {setpoint}, current: {current}")
